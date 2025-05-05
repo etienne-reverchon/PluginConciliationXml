@@ -36,7 +36,7 @@ export default {
     return {
       modal: { title: 'Extraction PDF → SQLite', key: 'pluginLoaderModalKey' },
       open: false,
-      plugin: new SqlitePlugin(),
+      plugin: SqlitePlugin,
       pluginContent: null,
       documents: [],
       pluginKey: 'pluginContentRef',
@@ -45,7 +45,7 @@ export default {
   methods: {
     load(documents) {
       this.documents = documents;
-      this.plugin = new SqlitePlugin();
+      this.plugin = SqlitePlugin;
       this.pluginContent = () => import('@/ecm/plugins/SqliteExtraction/PluginContent');
       this.open = true;
     },

@@ -87,12 +87,12 @@ import axios from "axios";
 import PluginLoaderModal from "@/components/PluginLoaderModal.vue";
 import BaseService from "@/ecm/common/BaseService.js";
 import JsonViewer from "vue-json-viewer";
-import SqlitePlugin from '@/ecm/plugins/SqliteExtraction/PluginContent';
+
 
 
 export default {
   name: "App",
-  components: { PluginLoaderModal, JsonViewer, SqlitePlugin },
+  components: { PluginLoaderModal, JsonViewer},
   data: () => ({
     snackbar: {
       show: false,
@@ -145,8 +145,7 @@ export default {
         );
         return;
       }
-      const loader = this.sqlitePluginModalInstance.load(this.documentList);         
-      console.log("pluginLoader ref :", loader);       
+      this.pluginLoaderModalInstance.load(this.documentList)    
     },
     login() {
       this.$store.dispatch("account/login", {
