@@ -1,61 +1,46 @@
-<!-- src/ecm/plugins/SqliteExtraction/PluginContent.vue -->
 <template>
-  <div class="p-4 max-w-lg mx-auto">
+  <div class="p-4 max-w-xl mx-auto">
     <h2 class="text-xl font-semibold mb-4">{{ pluginConfig.name }}</h2>
 
-    <!-- Zone de drag & drop -->
+    <!-- Zone de drag & drop PDF -->
     <div
       class="dropzone mb-4 p-6 border-2 border-dashed rounded text-center cursor-pointer"
       @dragover.prevent
       @drop.prevent="onDrop"
     >
       <div v-if="!file">
-        Glissez-déposez un fichier<br/>
-        <small>({{ pluginConfig.acceptMime.join(', ') }})</small>
+        Glissez-deposez un PDF a traiter<br />
+        <small>(application/pdf)</small>
       </div>
       <div v-else class="font-medium text-gray-700">
         📄 {{ file.name }}
       </div>
     </div>
 
-    <!-- Sélecteur de colonnes -->
-    <div class="mb-4">
-      <label class="block mb-1">Colonnes à extraire</label>
-      <select
-        v-model="selectedCols"
-        multiple
-        class="w-full p-2 border rounded"
-      >
-        <option
-          v-for="col in pluginConfig.defaultColumns"
-          :key="col"
-          :value="col"
-        >
-          {{ col }}
-        </option>
-      </select>
-      <small class="text-gray-500">Ctrl+clic pour plusieurs</small>
-    </div>
+    <!-- Saisie libre des colonnes -->
+    <v-combobox
+      v-model="selectedCols"
+      :items="pluginConfig.defaultColumns"
+      multiple
+      small-chips
+      deletable-chips
+      solo
+      clearable
+      label="Colonnes a extraire (laisser vide pour toutes)"
+      class="mb-6"
+    />
 
-    <!-- Bouton d’action -->
+    <!-- Bouton principal -->
     <button
       @click="runExtraction"
-      :disabled="!file || !selectedCols.length || loading"
+      :disabled="!file || loading"
       class="w-full py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
     >
       {{ loading ? 'Extraction…' : 'Extraire et Sauvegarder' }}
     </button>
 
-    <!-- Affichage d’erreur -->
+    <!-- Erreur -->
     <p v-if="error" class="mt-3 text-red-600">{{ error }}</p>
-
-    <!-- Lien de téléchargement -->
-    <div v-if="result" class="mt-4 p-3 bg-green-100 rounded">
-      ✔️ Extraction réussie !<br/>
-      <a :href="result.downloadUrl" target="_blank" class="underline text-blue-600">
-        Télécharger la base SQLite
-      </a>
-    </div>
   </div>
 </template>
 
@@ -68,81 +53,174 @@ export default {
       file: null,
       selectedCols: [...this.pluginConfig.defaultColumns],
       loading: false,
-      error: null,
-      result: null
-    }
+      error: null
+    };
   },
   methods: {
+    // UI
     onDrop(e) {
-      const f = e.dataTransfer.files[0]
-      if (!f) return
-      if (!this.pluginConfig.acceptMime.includes(f.type)) {
-        this.error = `Type non supporté : ${f.type}`
-        return
+      const f = e.dataTransfer.files[0];
+      if (!f || f.type !== 'application/pdf') {
+        this.error = 'Veuillez deposer un fichier PDF.';
+        return;
       }
-      this.file   = f
-      this.error  = null
-      this.result = null
+      this.file = f;
+      this.error = null;
     },
 
-    getFieldValue(key) {
-      const doc = this.documentList?.[0]
-      const field = doc?.Fields?.find(f => f.Key === key)
-      if (!field) {
-        console.warn(`Champ non trouvé : ${key}`)
-      }
-      return field ? field.Value : ''
-    },
-
+    // Processus principal
     async runExtraction() {
-      this.error   = null
-      this.loading = true
-
+      this.error = null;
+      this.loading = true;
       try {
-        // Préparer le FormData avec exactement les deux champs attendus
-        const form = new FormData()
-        form.append('File', this.file)                                // clé "File" comme dans Postman
-        form.append('Columns', this.selectedCols.join(','))           // clé "Columns"
-        const nameField = this.getFieldValue('Name')
-        form.append('DocumentName', nameField)
+        // 1) upload PDF vers Mistral via action 6 CallRestAPI
+        const pdf64 = await this.fileToBase64(this.file);
+        const uploadRes = await this.callRestApi({
+          APIUrl: 'https://api.mistral.ai/v1/files',
+          RequestType: 'POST',
+          RequestHeaders: [{ Name: 'Authorization', Value: `Bearer ${this.pluginConfig.mistralApiKey}` }],
+          RequestFiles: [
+            { ParamName: 'file', Base64File: pdf64, FileName: this.file.name }
+          ],
+          RequestParameters: [
+            { Name: 'purpose', Value: 'ocr', Type: 4 }
+          ]
+        });
+        const uploadId = uploadRes.id;
 
+        // 2) recuperer URL signee
+        const signed = await this.callRestApi({
+          APIUrl: `https://api.mistral.ai/v1/files/${uploadId}/url?expiry=10`,
+          RequestType: 'GET',
+          RequestHeaders: [{ Name: 'Authorization', Value: `Bearer ${this.pluginConfig.mistralApiKey}` }]
+        });
+        const signedUrl = signed.url;
 
-  
-        const apiUrl = "http://localhost:5151"
-        const url    = `${apiUrl}/api/SqliteExtraction/extract`
+        // 3) appel OCR
+        const ocrPayload = {
+          model: 'mistral-ocr-latest',
+          document: { type: 'document_url', document_url: signedUrl },
+          include_image_base64: false
+        };
+        const ocr = await this.callRestApi({
+          APIUrl: 'https://api.mistral.ai/v1/ocr',
+          RequestType: 'POST',
+          RequestHeaders: [
+            { Name: 'Authorization', Value: `Bearer ${this.pluginConfig.mistralApiKey}` },
+            { Name: 'Accept', Value: 'application/json' }
+          ],
+          RequestParameters: [
+            { Name: 'application/json', Value: JSON.stringify(ocrPayload), Type: 4 }
+          ]
+        });
+        console.log('OCR raw response', ocr);
 
-        // Appel direct à ton API ASP.NET
-        const resp = await fetch(url, {
-          method: 'POST',
-          body: form
-        })
+        const markdown = ocr.pages.map(p => p.markdown).join('\n');
+        const wanted = this.selectedCols.length ? this.selectedCols : undefined;
+        const rows = this.parseMarkdown(markdown, wanted);
+        if (!rows.length) throw new Error('Aucune donnee extraite.');
 
-        if (!resp.ok) {
-          const txt = await resp.text()
-          throw new Error(`Erreur ${resp.status} – ${txt}`)
-        }
-
-        // Parser la réponse JSON
-        this.result = await resp.json()
-        window.getApp.$emit('APP_MESSAGE', 'Extraction réussie !')
+        await this.saveRowsToInternalTable(rows);
+        window.getApp.$emit('APP_MESSAGE', `Import termine (${rows.length} lignes)`);
+      } catch (e) {
+        this.error = e.message;
+        window.getApp.$emit('APP_ERROR', this.error);
+      } finally {
+        this.loading = false;
       }
-      catch (e) {
-        this.error = e.message
-        window.getApp.$emit('APP_ERROR', this.error)
+    },
+
+    // Helpers actions Doc.ECM / REST
+    async callPluginAction(payload) {
+      const api = this.$store.getters['account/apiUrl'];
+      const token = this.$store.getters['account/token'];
+      const resp = await fetch(`${api}/api/plugin/execute-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      return JSON.parse(await resp.text());
+    },
+    async callRestApi(params) {
+      const raw = await this.callPluginAction({
+        Action: 6,
+        Data  : JSON.stringify({ ApiRequestParameters: params })
+      });
+      try {
+        return JSON.parse(raw);
+      } catch (_) {
+        return raw;
       }
-      finally {
-        this.loading = false
+    },
+    async ensureTable(columns) {
+      await this.callPluginAction({
+        Action: 1,
+        Data: JSON.stringify({ TableName: this.pluginConfig.dbTableName || 'OcrExtractionResults', ColumnNames: columns })
+      });
+    },
+    async saveRowsToInternalTable(rows) {
+      const cols = Object.keys(rows[0]);
+      await this.ensureTable(cols);
+      const payloadRows = rows.map(r => ({
+        Id: 0,
+        Cells: cols.map(c => ({ ColumnName: c, Value: String(r[c] ?? '') }))
+      }));
+      await this.callPluginAction({
+        Action: 3,
+        Data: JSON.stringify({ TableName: this.pluginConfig.dbTableName || 'OcrExtractionResults', Rows: payloadRows })
+      });
+    },
+
+    // Utils
+    fileToBase64(file) {
+      return new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(',')[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+    },
+    normalize(str) {
+      return str.normalize('NFD').replace(/[\p{Diacritic}]/gu, '').toLowerCase();
+    },
+    parseMarkdown(md, wantedCols) {
+      const lines = md.split(/\r?\n/);
+      const headerRe = /^\|/;
+      const sepRe = /^\|[- :]+\|/;
+      let headerIdx = -1;
+      let map = {};
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (!headerRe.test(l) || sepRe.test(l)) continue;
+        const parts = l.slice(1, -1).split('|').map(s => s.trim());
+        const cand = {};
+        (wantedCols || parts).forEach(col => {
+          const idx = parts.findIndex(p => this.normalize(p) === this.normalize(col));
+          if (idx !== -1) cand[col] = idx;
+        });
+        const all = (wantedCols || parts).every(c => c in cand);
+        if (all) { headerIdx = i; map = cand; break; }
       }
+      if (headerIdx === -1) return [];
+      const rows = [];
+      for (let i = headerIdx + 2; i < lines.length; i++) {
+        const l = lines[i];
+        if (!headerRe.test(l)) break;
+        const parts = l.slice(1, -1).split('|').map(s => s.trim());
+        const obj = {};
+        Object.keys(map).forEach(col => { obj[col] = parts[map[col]] || ''; });
+        rows.push(obj);
+      }
+      return rows;
     }
   }
-}
+};
 </script>
 
 <style scoped>
-.dropzone {
-  transition: background-color .2s;
-}
-.dropzone:hover {
-  background-color: #f0f4f8;
-}
+.dropzone { transition: background-color 0.2s; }
+.dropzone:hover { background-color: #f0f4f8; }
 </style>

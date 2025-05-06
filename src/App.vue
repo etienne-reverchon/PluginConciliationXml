@@ -4,10 +4,9 @@
       <v-container fluid fill-height>
         <v-card class="mx-auto" max-width="500">
           <div v-if="isLoggedIn">
-            <v-card-title
-              >Welcome
-              {{ currentUser.Name + " " + currentUser.Surname }} !</v-card-title
-            >
+            <v-card-title v-if="currentUser">
+              Welcome {{ currentUser.Name }} {{ currentUser.Surname }} !
+            </v-card-title>
             <v-card-subtitle
               >Please fill in the document IDs to test with the plugin
             </v-card-subtitle>
