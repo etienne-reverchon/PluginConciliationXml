@@ -18,7 +18,9 @@
     </div>
 
     <!-- Saisie libre des colonnes -->
+    <p>Debug: Showing combobox</p>
     <v-combobox
+
       v-model="selectedCols"
       :items="pluginConfig.defaultColumns"
       multiple
