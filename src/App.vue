@@ -136,15 +136,7 @@ export default {
   },
   methods: {
     loadPlugin() {
-      console.log("Load Pluggin")
-      if (this.documentList.length == 0) {
-        window.getApp.$emit(
-          "APP_ERROR",
-          "Please find at least one document before launching the plugin"
-        );
-        return;
-      }
-      this.pluginLoaderModalInstance.load(this.documentList)    
+      this.pluginLoaderModalInstance.load(this.documentList || [])    
     },
     login() {
       this.$store.dispatch("account/login", {
