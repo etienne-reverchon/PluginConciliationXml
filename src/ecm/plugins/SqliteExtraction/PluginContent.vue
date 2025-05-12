@@ -80,7 +80,7 @@ export default {
   computed: {
     visibleCols() {
       // Always include filename column
-      const base = this.columns.length ? this.columns : (this.rows[0] ? Object.keys(this.rows[0]).filter(c => c !== 'filename') : []);
+      const base = this.columns.length ? this.columns : (this.rows[0] ? Object.keys(this.rows[0]).filter(c => c !== 'filename' && c !== 'isChecked') : []);
       return [...base, 'filename'];
     }
   },
@@ -101,9 +101,9 @@ export default {
       this.error = '';
 
       const tableName = this.pluginConfig.dbTableName || 'OcrExtractionResults';
-        // Normalisation du nom de fichier pour comparaison
-        const rawName = this.pdfFile.name.trim();
-        const filename = rawName.toUpperCase();
+      // Normalisation du nom de fichier pour comparaison
+      const rawName = this.pdfFile.name.trim();
+      const filename = rawName.toUpperCase();
 
       try {
         // 1. Vérifier ou créer la table interne si nécessaire
@@ -156,10 +156,16 @@ export default {
         if (!Array.isArray(data) || !data.length) {
           throw new Error('Aucune ligne extraite.');
         }
-        this.rows = data;
+
+        // Ajouter la colonne isChecked à chaque ligne avec la valeur false par défaut
+        this.rows = data.map(row => {
+          const newRow = { ...row };
+          newRow.isChecked = 'false';
+          return newRow;
+        });
 
         // 3. Créer table (idempotent)
-        const cols = Object.keys(data[0]);
+        const cols = Object.keys(this.rows[0]);
         if (!cols.includes('filename')) cols.push('filename');
         await this.callPluginAction({
           Action: 1,
