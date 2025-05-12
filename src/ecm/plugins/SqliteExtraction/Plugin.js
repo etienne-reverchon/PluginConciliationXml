@@ -5,6 +5,7 @@ export default {
     name: 'Conciliation',
     contentType: 'SqliteFile v1.0',
     acceptMime: ['application/pdf'],
+    dbTableName : 'ConciliationTable',
     defaultColumns: ['Fecha', 'Comprobante', 'Importe'], 
     mistralApiKey : 'mx58mABSnLF3RkKjE7PRf3h1QnrKqsFi',
     formatdecimals :',',
