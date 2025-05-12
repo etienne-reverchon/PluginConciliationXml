@@ -2,227 +2,205 @@
   <div class="p-4 max-w-xl mx-auto">
     <h2 class="text-xl font-semibold mb-4">{{ pluginConfig.name }}</h2>
 
-    <!-- Zone de drag & drop PDF -->
+    <!-- dropzone -->
     <div
       class="dropzone mb-4 p-6 border-2 border-dashed rounded text-center cursor-pointer"
       @dragover.prevent
       @drop.prevent="onDrop"
     >
-      <div v-if="!file">
-        Glissez-deposez un PDF a traiter<br />
-        <small>(application/pdf)</small>
+      <div v-if="!pdfFile">
+        Glissez-déposez un PDF<br><small>(application/pdf)</small>
       </div>
       <div v-else class="font-medium text-gray-700">
-        📄 {{ file.name }}
+        📄 {{ pdfFile.name }}
       </div>
     </div>
 
-    <!-- Saisie libre des colonnes -->
-    <p>Debug: Showing combobox</p>
-    <v-combobox
-
-      v-model="selectedCols"
+    <!-- sélection des colonnes -->
+    <multi-combo
+      v-model="columns"
       :items="pluginConfig.defaultColumns"
-      multiple
-      small-chips
-      deletable-chips
-      solo
-      clearable
-      label="Colonnes a extraire (laisser vide pour toutes)"
+      placeholder="Colonnes à extraire"
       class="mb-6"
-    />
+    ></multi-combo>
 
-    <!-- Bouton principal -->
+    <!-- bouton extraction -->
     <button
-      @click="runExtraction"
-      :disabled="!file || loading"
       class="w-full py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+      :disabled="!pdfFile || loading"
+      @click="runExtraction"
     >
       {{ loading ? 'Extraction…' : 'Extraire et Sauvegarder' }}
     </button>
-
-    <!-- Erreur -->
     <p v-if="error" class="mt-3 text-red-600">{{ error }}</p>
+
+    <!-- résultats -->
+    <table v-if="rows.length" class="table-auto w-full mt-6 border-collapse">
+      <thead>
+        <tr class="bg-gray-100">
+          <th
+            v-for="col in visibleCols"
+            :key="col"
+            class="border px-2 py-1 text-left"
+          >
+            {{ col }}
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="(r, i) in rows"
+          :key="i"
+          class="hover:bg-gray-50"
+        >
+          <td
+            v-for="col in visibleCols"
+            :key="col"
+            class="border px-2 py-1"
+          >
+            {{ r[col] || '' }}
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 </template>
 
 <script>
+import MultiCombo from './MultiCombo.vue';
+
 export default {
   name: 'SqliteExtraction',
-  props: ['pluginConfig', 'documentList'],
-  data() {
+  components: { MultiCombo },
+  props: {
+    pluginConfig: { type: Object, required: true }
+  },
+  data: function() {
     return {
-      file: null,
-      selectedCols: [...this.pluginConfig.defaultColumns],
+      pdfFile: null,
+      columns: this.pluginConfig.defaultColumns.slice(),
+      rows: [],
       loading: false,
-      error: null
+      error: ''
     };
   },
+  computed: {
+    visibleCols: function() {
+      if (this.columns && this.columns.length) {
+        return this.columns;
+      }
+      return this.rows.length ? Object.keys(this.rows[0]) : [];
+    }
+  },
   methods: {
-    // UI
-    onDrop(e) {
-      const f = e.dataTransfer.files[0];
+    onDrop: function(e) {
+      var f = e.dataTransfer.files[0];
       if (!f || f.type !== 'application/pdf') {
-        this.error = 'Veuillez deposer un fichier PDF.';
+        this.error = 'Veuillez déposer un PDF valide.';
         return;
       }
-      this.file = f;
-      this.error = null;
+      this.pdfFile = f;
+      this.error = '';
     },
 
-    // Processus principal
-    async runExtraction() {
-      this.error = null;
-      this.loading = true;
-      try {
-        // 1) upload PDF vers Mistral via action 6 CallRestAPI
-        const pdf64 = await this.fileToBase64(this.file);
-        const uploadRes = await this.callRestApi({
-          APIUrl: 'https://api.mistral.ai/v1/files',
-          RequestType: 'POST',
-          RequestHeaders: [{ Name: 'Authorization', Value: `Bearer ${this.pluginConfig.mistralApiKey}` }],
-          RequestFiles: [
-            { ParamName: 'file', Base64File: pdf64, FileName: this.file.name }
-          ],
-          RequestParameters: [
-            { Name: 'purpose', Value: 'ocr', Type: 4 }
-          ]
-        });
-        const uploadId = uploadRes.id;
+    runExtraction: function() {
+      var self = this;
+      if (!self.pdfFile) return;
+      self.loading = true;
+      self.error = '';
+      self.rows = [];
 
-        // 2) recuperer URL signee
-        const signed = await this.callRestApi({
-          APIUrl: `https://api.mistral.ai/v1/files/${uploadId}/url?expiry=10`,
-          RequestType: 'GET',
-          RequestHeaders: [{ Name: 'Authorization', Value: `Bearer ${this.pluginConfig.mistralApiKey}` }]
-        });
-        const signedUrl = signed.url;
-
-        // 3) appel OCR
-        const ocrPayload = {
-          model: 'mistral-ocr-latest',
-          document: { type: 'document_url', document_url: signedUrl },
-          include_image_base64: false
-        };
-        const ocr = await this.callRestApi({
-          APIUrl: 'https://api.mistral.ai/v1/ocr',
-          RequestType: 'POST',
-          RequestHeaders: [
-            { Name: 'Authorization', Value: `Bearer ${this.pluginConfig.mistralApiKey}` },
-            { Name: 'Accept', Value: 'application/json' }
-          ],
-          RequestParameters: [
-            { Name: 'application/json', Value: JSON.stringify(ocrPayload), Type: 4 }
-          ]
-        });
-        console.log('OCR raw response', ocr);
-
-        const markdown = ocr.pages.map(p => p.markdown).join('\n');
-        const wanted = this.selectedCols.length ? this.selectedCols : undefined;
-        const rows = this.parseMarkdown(markdown, wanted);
-        if (!rows.length) throw new Error('Aucune donnee extraite.');
-
-        await this.saveRowsToInternalTable(rows);
-        window.getApp.$emit('APP_MESSAGE', `Import termine (${rows.length} lignes)`);
-      } catch (e) {
-        this.error = e.message;
-        window.getApp.$emit('APP_ERROR', this.error);
-      } finally {
-        this.loading = false;
+      // 1) Préparer FormData
+      var form = new FormData();
+      form.append('File', self.pdfFile);
+      if (self.columns && self.columns.length) {
+        form.append('Columns', self.columns.join(','));
       }
+
+      // 2) Appel à l’API d’extraction
+      fetch('https://api-docvisionai.doc-ecm.cloud/api/ExtractionJson/extract-json', {
+        method: 'POST',
+        body: form
+      })
+        .then(function(res) {
+          if (!res.ok) throw new Error('API error ' + res.status);
+          return res.json();
+        })
+        .then(function(payload) {
+          if (!Array.isArray(payload.data) || !payload.data.length) {
+            throw new Error('Aucune ligne extraite.');
+          }
+          self.rows = payload.data;
+
+          // 3) Création table interne
+          var cols = Object.keys(self.rows[0]);
+          return self.callPluginAction({
+            Action: 1,
+            Data: JSON.stringify({
+              TableName: self.pluginConfig.dbTableName || 'OcrExtractionResults',
+              ColumnNames: cols
+            })
+          }).then(function() { return cols; });
+        })
+        .then(function(cols) {
+          // 4) Insertion des lignes
+          var payloadRows = self.rows.map(function(r) {
+            return {
+              Id: 0,
+              Cells: cols.map(function(c) {
+                return { ColumnName: c, Value: String(r[c] || '') };
+              })
+            };
+          });
+          return self.callPluginAction({
+            Action: 3,
+            Data: JSON.stringify({
+              TableName: self.pluginConfig.dbTableName || 'OcrExtractionResults',
+              Rows: payloadRows
+            })
+          });
+        })
+        .then(function() {
+          window.getApp.$emit('APP_MESSAGE', 'Extraction réussie ! (' + self.rows.length + ' lignes)');
+        })
+        .catch(function(err) {
+          self.error = err.message;
+          window.getApp.$emit('APP_ERROR', self.error);
+        })
+        .finally(function() {
+          self.loading = false;
+        });
     },
 
-    // Helpers actions Doc.ECM / REST
-    async callPluginAction(payload) {
-      const api = this.$store.getters['account/apiUrl'];
-      const token = this.$store.getters['account/token'];
-      const resp = await fetch(`${api}/api/plugin/execute-action`, {
+    callPluginAction: function(opts) {
+      var token = this.$store.getters['account/token'];
+      return fetch(this.$store.getters['account/apiUrl'] + '/api/plugin/execute-action', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: 'Bearer ' + token
         },
-        body: JSON.stringify(payload)
-      });
-      return JSON.parse(await resp.text());
-    },
-    async callRestApi(params) {
-      const raw = await this.callPluginAction({
-        Action: 6,
-        Data  : JSON.stringify({ ApiRequestParameters: params })
-      });
-      try {
-        return JSON.parse(raw);
-      } catch (_) {
-        return raw;
-      }
-    },
-    async ensureTable(columns) {
-      await this.callPluginAction({
-        Action: 1,
-        Data: JSON.stringify({ TableName: this.pluginConfig.dbTableName || 'OcrExtractionResults', ColumnNames: columns })
-      });
-    },
-    async saveRowsToInternalTable(rows) {
-      const cols = Object.keys(rows[0]);
-      await this.ensureTable(cols);
-      const payloadRows = rows.map(r => ({
-        Id: 0,
-        Cells: cols.map(c => ({ ColumnName: c, Value: String(r[c] ?? '') }))
-      }));
-      await this.callPluginAction({
-        Action: 3,
-        Data: JSON.stringify({ TableName: this.pluginConfig.dbTableName || 'OcrExtractionResults', Rows: payloadRows })
-      });
-    },
-
-    // Utils
-    fileToBase64(file) {
-      return new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result.split(',')[1]);
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-    },
-    normalize(str) {
-      return str.normalize('NFD').replace(/[\p{Diacritic}]/gu, '').toLowerCase();
-    },
-    parseMarkdown(md, wantedCols) {
-      const lines = md.split(/\r?\n/);
-      const headerRe = /^\|/;
-      const sepRe = /^\|[- :]+\|/;
-      let headerIdx = -1;
-      let map = {};
-      for (let i = 0; i < lines.length; i++) {
-        const l = lines[i];
-        if (!headerRe.test(l) || sepRe.test(l)) continue;
-        const parts = l.slice(1, -1).split('|').map(s => s.trim());
-        const cand = {};
-        (wantedCols || parts).forEach(col => {
-          const idx = parts.findIndex(p => this.normalize(p) === this.normalize(col));
-          if (idx !== -1) cand[col] = idx;
-        });
-        const all = (wantedCols || parts).every(c => c in cand);
-        if (all) { headerIdx = i; map = cand; break; }
-      }
-      if (headerIdx === -1) return [];
-      const rows = [];
-      for (let i = headerIdx + 2; i < lines.length; i++) {
-        const l = lines[i];
-        if (!headerRe.test(l)) break;
-        const parts = l.slice(1, -1).split('|').map(s => s.trim());
-        const obj = {};
-        Object.keys(map).forEach(col => { obj[col] = parts[map[col]] || ''; });
-        rows.push(obj);
-      }
-      return rows;
+        body: JSON.stringify(opts)
+      })
+        .then(function(r) { return r.text(); })
+        .then(function(t) { return JSON.parse(t); });
     }
   }
 };
 </script>
 
 <style scoped>
-.dropzone { transition: background-color 0.2s; }
-.dropzone:hover { background-color: #f0f4f8; }
+.dropzone {
+  transition: background-color 0.2s;
+}
+.dropzone:hover {
+  background-color: #f0f4f8;
+}
+table {
+  border: 1px solid #d1d5db;
+}
+th,
+td {
+  border: 1px solid #e5e7eb;
+}
 </style>
