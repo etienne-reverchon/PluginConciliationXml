@@ -24,14 +24,21 @@
       class="mb-6"
     />
 
-    <!-- bouton extraction -->
     <button
-      class="w-full py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-      :disabled="!pdfFile || loading"
-      @click="runExtraction"
-    >
-      {{ loading ? 'Extraction…' : 'Extraire et Sauvegarder' }}
-    </button>
+        class="flex-1 py-3 px-6 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 transition-all"
+        :disabled="!pdfFile || loadingExtraction"
+        @click="runExtraction"
+      >
+        {{ loadingExtraction ? 'Extraction…' : 'Extraire et Sauvegarder' }}
+      </button>
+
+      <button
+        class="flex-1 py-3 px-6 bg-green-600 text-white font-semibold rounded-lg shadow hover:bg-green-700 transition-all"
+        :disabled="!pdfFile || loadingConciliation"
+        @click="runConciliation"
+      >
+        {{ loadingConciliation ? 'Conciliation en cours…' : 'Lancer la conciliation' }}
+      </button>
 
     <p v-if="error" class="mt-3 text-red-600">{{ error }}</p>
 
@@ -73,7 +80,8 @@ export default {
       pdfFile: null,
       columns: [...this.pluginConfig.defaultColumns],
       rows: [],
-      loading: false,
+      loadingExtraction: false,
+      loadingConciliation: false,
       error: ''
     };
   },
@@ -95,9 +103,18 @@ export default {
       this.error = '';
     },
 
+    async runConciliation() {
+      this.loadingConciliation = true;
+      try {
+        console.log("Conciliation to be implemented");
+      } finally {
+        this.loadingConciliation = false;
+      }
+    },
+
     async runExtraction() {
       if (!this.pdfFile) return;
-      this.loading = true;
+      this.loadingExtraction = true;
       this.error = '';
 
       const tableName = this.pluginConfig.dbTableName || 'OcrExtractionResults';
@@ -190,7 +207,7 @@ export default {
         this.error = err.message;
         window.getApp.$emit('APP_ERROR', this.error);
       } finally {
-        this.loading = false;
+        this.loadingExtraction = false;
       }
     },
 
