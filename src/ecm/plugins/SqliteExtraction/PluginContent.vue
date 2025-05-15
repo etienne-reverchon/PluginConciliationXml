@@ -396,19 +396,26 @@ if (pagado) {
 
       /* e) Maj table interne */
       
-      await this.callPluginAction({
-        
-        Action: 4,
-        Data  : JSON.stringify({
-          TableName: tableName,
-          Rows: [{
-            Id: Number(r._rowId),
-            Cells: [
-              { ColumnName: 'isChecked', Value: 'true'}
-            ]
-          }]
-        })
-      });
+      /* e) Maj table interne */
+/* e) Maj table interne : isChecked = true */
+await this.callPluginAction({
+  Action: 3,                                // ← SaveDataInternalTable
+  Data  : JSON.stringify({
+    TableName: tableName,
+    Rows: [{
+      Id: Number(r._rowId) ?? 0,                    // ← ① OBLIGATOIRE
+      Cells: [
+        { ColumnName: 'Fecha',                 Value: r.Fecha },
+        { ColumnName: 'filename',                 Value: r.filename },
+        { ColumnName: 'Comprobante',      Value: numFact   },
+        { ColumnName: 'Importe', Value: importe   },
+        { ColumnName: 'isChecked',                Value: 'true'    }
+      ]
+    }]
+  })
+});
+
+
       console.log("ROW ID : ", Number(r._rowId));
       this.$set(this.rows[r._idx], 'isChecked', 'true');
       matched++;
@@ -543,27 +550,15 @@ async searchFactura (ctId, filters) {
         this.loadingExtraction = false;
       }
     },
-
-    async callPluginAction(opts) {
-      const token = this.$store.getters['account/token'];
-      const response = await fetch(
+    async callPluginAction(body) {
+      return fetchAuth(
+        'POST',
         `${this.$store.getters['account/apiUrl']}/api/plugin/execute-action`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify(opts)
-        }
+        body,
+        this.pluginConfig.auth
       );
-      const text = await response.text();
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw new Error(`Action ${opts.Action} failed: ${text}`);
-      }
     }
+
   }
 };
 </script>
