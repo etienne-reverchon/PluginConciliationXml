@@ -166,6 +166,32 @@ const buildSearchPattern = (filters) =>
     return `;${f.FieldName}|${op}|${value}|${type};`;
   }).join('AND') + ')';
 
+  function normaliseAmount(v) {
+  let s = String(v ?? '').trim();
+  if (!s) return '';
+
+  // 1) enlever les espaces / fine / insécables
+  s = s.replace(/\s+/g, '');
+
+  /* ----------------------------------------------------------------
+     Si la chaîne contient une virgule, on considère que :
+       · la virgule est la décimale
+       · tous les points sont des séparateurs de milliers → on les enlève
+     Sinon :
+       · le point est la décimale
+       · les virgules éventuelles sont des milliers → on les enlève
+  -----------------------------------------------------------------*/
+  if (s.includes(',')) {
+    s = s.replace(/\./g, '').replace(',', '.');     // "1.234,56" → "1234.56"
+  } else {
+    s = s.replace(/,/g, '');                        // "1,234.56" → "1234.56"
+  }
+
+  const n = Number(s);
+  return Number.isFinite(n) ? n.toFixed(2) : '';
+}
+
+
   
 
 /* ------------------------------------------------------------------ */
@@ -314,11 +340,14 @@ export default {
         .every(([, v]) => String(v ?? '').trim() !== '');
     },
 
-
-    async runConciliation () {
+    /* -------------------------------------------------------------- */
+/* Conciliation OCR ↔ GED                                          */
+/* -------------------------------------------------------------- */
+async runConciliation () {
   console.clear();
   console.log('runConciliation lancé');
 
+  /* 0. Pré-chargement éventuel des lignes ---------------------- */
   if (!this.rows.length) await this.loadRowsFromTable();
   if (!this.rows.length) {
     window.getApp.$emit('APP_MESSAGE', 'Aucun enregistrement à concilier.');
@@ -326,118 +355,107 @@ export default {
   }
 
   this.loadingConciliation = true;
+
   const tableName   = this.pluginConfig.dbTableName;
   const facturaCtId = this.pluginConfig.facturaContentTypeId;
 
   try {
-    /* 1. Lignes éligibles */
+    /* 1. Construit la todo-list : lignes complètes et non cochées */
     const todo = this.rows
       .map((r, i) => ({ ...r, _idx: i }))
       .filter(r => !['true', true].includes(r.isChecked) && this.isRowComplete(r));
 
     let matched = 0;
 
-    /* 2. Boucle */
+    /* 2. Parcours des lignes ---------------------------------- */
     for (const r of todo) {
-      const numFact = String(r.FC_no_de_la_factura || '').trim();
-      const importe = String(r.FC_importe_de_la_factura || '')
-                        .replace(/\s/g, '')
-                        .replace(',', '.');
+      const numFact  = String(r.FC_no_de_la_factura || '').trim();
+      const importe  = normaliseAmount(r.FC_importe_de_la_factura);
+      if (!numFact || !importe) continue;              // garde-fous
 
-      if (!numFact || !importe) continue;
-
-      /* a) –– construction du pattern –– */
-      const baseFilters = [
-        { FieldName: 'FC_no_de_la_factura',      Operator: '=', Value: numFact, type: 'string' },   // NEW ▲ string
-        { FieldName: 'FC_importe_de_la_factura', Operator: '=', Value: importe, type: 'string' }   // NEW ▲ string
-      ];
-
-      /* b) –– 1ᵉʳ essai : N° + montant  –– */
-      let docs = await this.searchFactura(facturaCtId, baseFilters);
-
-      /* c) –– fallback : N° seul  –– */
-      if (!docs.length) {
-        docs = await this.searchFactura(facturaCtId, [ baseFilters[0] ]);
-      }
-
-      const doc = docs[0];
+      /* 2.1 Recherche GED sur le N° de facture seul ----------- */
+      const docs = await this.searchFactura(facturaCtId, [
+        { FieldName:'FC_no_de_la_factura', Operator:'=', Value:numFact, type:'string' }
+      ]);
+      const doc  = docs[0];
       if (!doc) continue;
 
-      /* d) Maj GED : FC_pagado = si */
-      const currentFields = doc.Fields.map(f => ({
-  DefFieldID : f.DefFieldID,
-  Type       : f.Type,
-  Code       : f.Code,
-  Value      : f.Value
-}));
+      /* 2.2 Contrôle du montant avec tolérance ---------------- */
+      const bruteDoc   = doc.Fields?.find(f => f.Code === 'FC_importe_de_la_factura')?.Value;
+      const importeDoc = normaliseAmount(bruteDoc);
+      console.log(`🔍 N°${numFact} | Ligne=${importe} | GED=${importeDoc}`);
+      if (Math.abs(Number(importeDoc) - Number(importe)) > 0.01) continue;
 
-// On change la valeur de FC_pagado
-const pagado = currentFields.find(f => f.Code === 'FC_pagado');
-if (pagado) {
-  pagado.Value = 'Si';                    // ← mets 'Si' ou 'No' selon ton besoin
-} else {
-  // si pour une raison quelconque le champ n'était pas dans la liste
-  currentFields.push({
-    DefFieldID : 21093,                   // id interne de FC_pagado
-    Type       : 3,                       // liste statique
-    Code       : 'FC_pagado',
-    Value      : 'No'
-  });
-}
+      /* 2.3 Mise à jour du doc GED (FC_pagado → 'Si') ---------- */
+      await this.marquerPagado(doc, facturaCtId);
 
-      await this.callRest('POST',
-        'https://apinetdemo.doc-ecm.cloud/api/document/save',
-        {
-          ObjectID : doc.ObjectID ?? doc.Id,
-          Operation     : 2,
-          ContentTypeID: Number(facturaCtId),
-          Fields       : currentFields
-        });
-
-      /* e) Maj table interne */
-      
-      /* e) Maj table interne */
-/* e) Maj table interne : isChecked = true */
-await this.callPluginAction({
-  Action: 3,                                // ← SaveDataInternalTable
-  Data  : JSON.stringify({
-    TableName: tableName,
-    Rows: [{
-      Id: Number(r._rowId) ?? 0,                    // ← ① OBLIGATOIRE
-      Cells: [
-        { ColumnName: 'Fecha',                 Value: r.Fecha },
-        { ColumnName: 'filename',                 Value: r.filename },
-        { ColumnName: 'Comprobante',      Value: numFact   },
-        { ColumnName: 'Importe', Value: importe   },
-        { ColumnName: 'isChecked',                Value: 'true'    }
-      ]
-    }]
-  })
-});
-
-
-      console.log("ROW ID : ", Number(r._rowId));
+      /* 2.4 Mise à jour de la table interne ------------------- */
+      await this.marquerLigneOk(r, tableName);
       this.$set(this.rows[r._idx], 'isChecked', 'true');
       matched++;
     }
 
+    /* 3. Fin de boucle, feedback UI --------------------------- */
     window.getApp.$emit(
       'APP_MESSAGE',
       `Conciliation terminée : ${matched}/${todo.length} facture(s) rapprochée(s).`
     );
 
-  } catch (e) {
-    this.error = e.message || String(e);
+  } catch (err) {
+    this.error = err.message || String(err);
     window.getApp.$emit('APP_ERROR', this.error);
+
   } finally {
     this.loadingConciliation = false;
   }
 },
 
-/* ------------------------------------------------------------------ */
-/* helper privé                                                        */
-/* ------------------------------------------------------------------ */
-async searchFactura (ctId, filters) {
+/* === Helpers ====================================================== */
+
+/* Marque FC_pagado = 'Si' et sauvegarde le document GED */
+async marquerPagado (doc, ctId) {
+  const currentFields = doc.Fields.map(f => ({ ...f }));        // shallow copy
+  const pagado        = currentFields.find(f => f.Code === 'FC_pagado');
+
+  if (pagado) pagado.Value = 'Si';
+  else currentFields.push({
+    DefFieldID : 21093,  Type : 3,  Code : 'FC_pagado',  Value : 'Si'
+  });
+
+  await this.callRest('POST',
+    'https://apinetdemo.doc-ecm.cloud/api/document/save',
+    {
+      ObjectID     : doc.ObjectID ?? doc.Id,
+      Operation    : 2,
+      ContentTypeID: Number(ctId),
+      Fields       : currentFields
+    });
+},
+
+/* Coche la ligne correspondante dans la table interne */
+async marquerLigneOk (row, tableName) {
+  await this.callPluginAction({
+    Action: 3,
+    Data  : JSON.stringify({
+      TableName: tableName,
+      Rows: [{
+        Id   : Number(row._rowId) || 0,
+        Cells: [
+          { ColumnName:'isChecked',   Value:'true' },
+          { ColumnName:'Importe',     Value: row.FC_importe_de_la_factura },
+          { ColumnName:'Comprobante', Value: row.FC_no_de_la_factura },
+          { ColumnName:'Fecha', Value: row.FC_fecha_de_la_factu}
+        ]
+      }]
+    })
+  });
+},
+
+
+
+  
+async searchFactura(ctId, filters) {
+
   const res = await this.callRest(
     'POST',
     'https://apinetdemo.doc-ecm.cloud/api/search/advanced',
