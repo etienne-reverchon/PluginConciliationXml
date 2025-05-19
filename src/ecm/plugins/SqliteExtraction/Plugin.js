@@ -13,11 +13,23 @@ export default {
     formatmilliers : '.',
     deletemilliers : false,
     auth: {
-    baseUrl : 'https://apidemo.doc-ecm.cloud',
+    baseUrl : 'https://apinetdemo.doc-ecm.cloud',
     tokenUrl : "/token",
     username : "admin.empresa",
     password : "admin.empresa"
-  }
+    },
+    conciliationInfos: {
+      columsInternalTable : "Comprobante, Importe",
+      columsDocument      : "FC_no_de_la_factura, FC_importe_de_la_factura",
+      isCheckedColumn     : "isChecked",
+      uncheckedValue      : "false",
+      checkedValue        : "true",
+      codeValidation      : "FC_pagado",
+      codeValidationId    : 21093,
+      valueToValidate     : "No",
+      valueValidation     : "Si"
+    }
+
 
   }
 }

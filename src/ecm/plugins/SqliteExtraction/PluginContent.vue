@@ -25,22 +25,21 @@
     />
 
     <button
-        class="flex-1 py-3 px-6 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 transition-all"
-        :disabled="!pdfFile || loadingExtraction"
-        @click="runExtraction"
-      >
-        {{ loadingExtraction ? 'Extraction…' : 'Extraire et Sauvegarder' }}
-      </button>
+      class="flex-1 py-3 px-6 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 transition-all"
+      :disabled="!pdfFile || loadingExtraction"
+      @click="runExtraction"
+    >
+      {{ loadingExtraction ? 'Extraction…' : 'Extraire et Sauvegarder' }}
+    </button>
 
-      <!-- bouton Conciliation -->
-      <button
-        class="flex-1 py-3 px-6 bg-green-600 text-white font-semibold rounded-lg shadow hover:bg-green-700 transition-all"
-        :disabled="loadingConciliation"
-        @click="runConciliation"
-      >
-        {{ loadingConciliation ? 'Conciliation en cours…' : 'Lancer la conciliation' }}
-      </button>
-
+    <!-- bouton Conciliation -->
+    <button
+      class="flex-1 py-3 px-6 bg-green-600 text-white font-semibold rounded-lg shadow hover:bg-green-700 transition-all"
+      :disabled="loadingConciliation"
+      @click="runConciliation"
+    >
+      {{ loadingConciliation ? 'Conciliation en cours…' : 'Lancer la conciliation' }}
+    </button>
 
     <p v-if="error" class="mt-3 text-red-600">{{ error }}</p>
 
@@ -78,132 +77,56 @@
 <script>
 import MultiCombo from './MultiCombo.vue';
 
-/* ------------------------------------------------------------------ */
-/*  Gestion du token d'API                                            */
-/* ------------------------------------------------------------------ */
-let apiToken   = null;
+let apiToken = null;
 let tokenUntil = 0;
 
-/** Retourne un token JWT valide (renouvelle si expiré) */
 async function getApiToken(auth) {
-  if (apiToken && Date.now() < tokenUntil - 30_000) {   // marge 30 s
-    return apiToken;
-  }
-
-  const body = new URLSearchParams({
-    grant_type: 'password',
-    username  : auth.username,
-    password  : auth.password
-  });
-
-  const res = await fetch('https://apidemo.doc-ecm.cloud/token', {
-    method : 'POST',
+  if (apiToken && Date.now() < tokenUntil - 30000) return apiToken;
+  const body = new URLSearchParams({ grant_type: 'password', username: auth.username, password: auth.password });
+  const res = await fetch(auth.baseUrl + '/token', {
+    method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body
   });
-  if (!res.ok) {
-    throw new Error(`/token → ${res.status}`);
-  }
-
+  if (!res.ok) throw new Error(`/token → ${res.status}`);
   const json = await res.json();
-  apiToken   = json.access_token;
-  tokenUntil = Date.now() + json.expires_in * 1_000;
+  apiToken = json.access_token;
+  tokenUntil = Date.now() + json.expires_in * 1000;
   return apiToken;
 }
 
-/** Wrapper générique : ajoute le Bearer automatiquement */
 async function fetchAuth(method, url, data, auth) {
   const token = await getApiToken(auth);
-  const res   = await fetch(url, {
+  const res = await fetch(url, {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
     body: data ? JSON.stringify(data) : undefined
   });
-  if (!res.ok) {
-    const txt = await res.text().catch(()=>'');
-    throw new Error(`${url} → ${res.status} ${txt}`);
-  }
+  if (!res.ok) throw new Error(`${url} → ${res.status}`);
   return res.json();
 }
 
-/* ------------------------------------------------------------------ */
-/* utilitaires globaux                                               */
-/* ------------------------------------------------------------------ */
-
-function normaliseDate(str) {
-
-  const m = str.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{3,4})$/);
-
-  if (!m) return null;
-
-  let [ , d, mth, y ] = m;
-  if (y.length === 3) y = '2' + y;          // “202” → “2020x”
-  if (y.length === 2) y = '20' + y;         // “24”  → “2024”
-
-  return `${y.padStart(4,'0')}-${mth.padStart(2,'0')}-${d.padStart(2,'0')}`;
-}
-
-const buildSearchPattern = (filters) =>
-  '(' + filters.map(f => {
-    // 1) type implicite
-    const type = f.type ?? (
-      f.FieldName.startsWith('FC_fecha') ? 'datetime' :
-      /^[-0-9,.]+$/.test(f.Value)       ? 'numeric'  : 'string'
-    );
-
-    // 2) valeur normalisée si datetime
-    const value = (type === 'datetime')
-      ? normaliseDate(f.Value) || f.Value
-      : f.Value;
-
-    // 3) opérateur en fonction du type
-    const opByType = { string:'s01', numeric:'n01', datetime:'d05' };
-    const op = opByType[type];
-
-    return `;${f.FieldName}|${op}|${value}|${type};`;
-  }).join('AND') + ')';
-
-  function normaliseAmount(v) {
-  let s = String(v ?? '').trim();
+function normaliseAmount(v) {
+  let s = String(v ?? '').trim().replace(/\s+/g, '');
   if (!s) return '';
-
-  // 1) enlever les espaces / fine / insécables
-  s = s.replace(/\s+/g, '');
-
-  /* ----------------------------------------------------------------
-     Si la chaîne contient une virgule, on considère que :
-       · la virgule est la décimale
-       · tous les points sont des séparateurs de milliers → on les enlève
-     Sinon :
-       · le point est la décimale
-       · les virgules éventuelles sont des milliers → on les enlève
-  -----------------------------------------------------------------*/
-  if (s.includes(',')) {
-    s = s.replace(/\./g, '').replace(',', '.');     // "1.234,56" → "1234.56"
-  } else {
-    s = s.replace(/,/g, '');                        // "1,234.56" → "1234.56"
-  }
-
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else s = s.replace(/,/g, '');
   const n = Number(s);
   return Number.isFinite(n) ? n.toFixed(2) : '';
 }
 
-
-  
-
-/* ------------------------------------------------------------------ */
-
-
+function buildSearchPattern(filters) {
+  return '(' + filters.map(f => {
+    const type = f.type ?? (/^[-0-9,.]+$/.test(f.Value) ? 'numeric' : 'string');
+    const op = { string: 's01', numeric: 'n01' }[type];
+    return `;${f.FieldName}|${op}|${f.Value}|${type};`;
+  }).join('AND') + ')';
+}
 
 export default {
   name: 'SqliteExtraction',
   components: { MultiCombo },
-  props: {
-    pluginConfig: { type: Object, required: true }
-  },
+  props: { pluginConfig: { type: Object, required: true } },
   data() {
     return {
       pdfFile: null,
@@ -216,10 +139,24 @@ export default {
   },
   computed: {
     visibleCols() {
-      // Always include filename column
       const base = this.columns.length ? this.columns : (this.rows[0] ? Object.keys(this.rows[0]).filter(c => c !== 'filename' && c !== 'isChecked') : []);
       return [...base, 'filename'];
-    }
+    },
+    cfg() {
+      return this.pluginConfig.conciliationInfos || {};
+    },
+    internalCols() {
+      return (this.cfg.columsInternalTable || '').split(',').map(s => s.trim());
+    },
+    externalCols() {
+      return (this.cfg.columsDocument || '').split(',').map(s => s.trim());
+    },
+    isCheckedCol() { return this.cfg.isCheckedColumn || 'isChecked'; },
+    uncheckedValue() { return this.cfg.uncheckedValue || 'false'; },
+    checkedValue() { return this.cfg.checkedValue || 'true'; },
+    ConciliatedCode() { return this.cfg.codeValidation || 'Pagado'; },
+    ConciliatedValue() { return this.cfg.valueValidation || 'Si'; },
+    NoConciliatedValue() { return this.cfg.valueToValidate || 'No'; }
   },
   methods: {
     onDrop(e) {
@@ -233,243 +170,111 @@ export default {
     },
 
     async debugGEDDocuments() {
-  // 1. la valeur doit rester une chaîne, pas un tableau
-  const ctId = String(this.pluginConfig.facturaContentTypeId);
-
-  try {
-    const res = await this.callRest(
-      'POST',
-      'https://apinetdemo.doc-ecm.cloud/api/search/advanced',
-      {
-        searchPattern : "(;%|%|%|string;)",
-        contentTypeIDs: ctId          // ✅ STRING
-        // pas de take / skip
-      }
-    );
-
-    /* 2. Le service renvoie directement un tableau -> on le gère */
-    const docs = Array.isArray(res) ? res : (res.Objects || []);
-
-    console.info(`🔍 ${docs.length} doc(s) trouvés pour ContentTypeID=${ctId}`);
-
-    /* 3. Dans la réponse les métadonnées s’appellent Code/Value, pas FieldName */
-    docs.forEach(d => {
-      const num = d.Fields?.find(f => f.Code === 'FC_no_de_la_factura')?.Value ?? '—';
-      const amt = d.Fields?.find(f => f.Code === 'FC_importe_de_la_factura')?.Value ?? '—';
-      console.log(`🧾 ID=${d.ObjectID} | Nº Facture=${num} | Montant=${amt}`);
-    });
-
-  } catch (err) {
-    console.error('❌ Debug GED :', err);
-  }
-},
-
-    async loadRowsFromTable() {
-      const tableName = this.pluginConfig.dbTableName;
-      if (!tableName) return;
-
-      let resp;
+      const ctId = String(this.pluginConfig.facturaContentTypeId);
       try {
-        resp = await this.callPluginAction({
-          Action: 2,
-          Data  : JSON.stringify({ TableName: tableName })
+        const res = await this.callRest('POST', `${this.pluginConfig.auth.baseUrl}/api/search/advanced`, {
+          searchPattern: '(;%|%|%|string;)',
+          contentTypeIDs: ctId
         });
-      } catch (e) {
-        console.error(`Action 2 KO : ${e.message}`);
-        this.rows = [];
-        return;
+        const docs = Array.isArray(res) ? res : (res.Objects || []);
+        console.info(`🔍 ${docs.length} doc(s) trouvé(s)`);
+        docs.forEach(d => {
+          const num = d.Fields?.find(f => f.Code === this.externalCols[0])?.Value ?? '—';
+          const amt = d.Fields?.find(f => f.Code === this.externalCols[1])?.Value ?? '—';
+          console.log(`ID=${d.ObjectID} | Nº Facture=${num} | Montant=${amt}`);
+        });
+      } catch (err) {
+        console.error('Debug GED :', err);
       }
-
-      if (typeof resp === 'string') {
-        try {
-          resp = JSON.parse(resp);
-        } catch (e) {
-          console.error('Impossible de parser la réponse :', resp);
-          this.rows = [];
-          return;
-        }
-      }
-
-      let records = [];
-
-      if (Array.isArray(resp)) {
-        records = resp;                                // cas ① tableau direct
-      } else if (Array.isArray(resp?.Rows)) {
-        records = resp.Rows;                           // cas ② {Rows:[…]}
-      } else if (resp && resp.Id && resp.Cells) {
-        records = [resp];                              // cas ③ objet unique
-      } else {
-        console.warn(`Table « ${tableName} » vide ou format inconnu`, resp);
-        this.rows = [];
-        return;
-      }
-
-      this.rows = records.map(r => {
-        const o = {};
-        (r.Cells || []).forEach(c => { o[c.ColumnName] = c.Value; });
-
-        o.FC_no_de_la_factura      ??= o.Comprobante;
-        o.FC_importe_de_la_factura ??= o.Importe;
-        o.FC_fecha_de_la_factu     ??= o.Fecha;
-        o.isChecked                ??= 'false';
-        o._rowId                   = r.Id;
-        return o;
-      });
-
-      if (!this.columns?.length && this.rows[0]) {
-        this.columns = Object.keys(this.rows[0])
-          .filter(c => !['filename', 'isChecked'].includes(c));
-      }
-
-      console.log(`${this.rows.length} ligne(s) chargée(s) depuis « ${tableName} »`);
-    },
-
-
-    async callRest(method, endpoint, body = null) {
-      return fetchAuth(
-        method,
-        `${endpoint}`,
-        body,
-        this.pluginConfig.auth 
-      );
     },
 
     isRowComplete(row) {
-      return Object.entries(row)
-        .filter(([k]) => !['filename', 'isChecked'].includes(k))
-        .every(([, v]) => String(v ?? '').trim() !== '');
-    },
+     return this.internalCols.every(col =>
+       String(row[col] ?? '').trim() !== ''
+     );
+   },
+    
 
-    /* -------------------------------------------------------------- */
-/* Conciliation OCR ↔ GED                                          */
-/* -------------------------------------------------------------- */
-async runConciliation () {
+    async runConciliation() {
   console.clear();
-  console.log('runConciliation lancé');
-
-  /* 0. Pré-chargement éventuel des lignes ---------------------- */
+  // → charger d'abord la table interne
   if (!this.rows.length) await this.loadRowsFromTable();
   if (!this.rows.length) {
-    window.getApp.$emit('APP_MESSAGE', 'Aucun enregistrement à concilier.');
-    return;
+    return window.getApp.$emit('APP_MESSAGE', 'Aucun enregistrement à concilier.');
   }
-
   this.loadingConciliation = true;
 
-  const tableName   = this.pluginConfig.dbTableName;
-  const facturaCtId = this.pluginConfig.facturaContentTypeId;
+  const ctId       = this.pluginConfig.facturaContentTypeId;
+  const tbl        = this.pluginConfig.dbTableName;
+  const [intKey, intValKey]   = this.internalCols;
+  const [extKeyNum, extKeyAmt] = this.externalCols;
 
   try {
-    /* 1. Construit la todo-list : lignes complètes et non cochées */
+    // 1) TODO-list = non cochées ET complètes
     const todo = this.rows
-      .map((r, i) => ({ ...r, _idx: i }))
-      .filter(r => !['true', true].includes(r.isChecked) && this.isRowComplete(r));
+      .map((r,i) => ({ ...r, _idx: i }))
+      .filter(r =>
+        r[this.isCheckedCol] === this.uncheckedValue &&
+        this.isRowComplete(r)
+      );
 
     let matched = 0;
 
-    /* 2. Parcours des lignes ---------------------------------- */
+    // 2) Parcours des lignes à rapprocher
     for (const r of todo) {
-      const numFact  = String(r.FC_no_de_la_factura || '').trim();
-      const importe  = normaliseAmount(r.FC_importe_de_la_factura);
-      if (!numFact || !importe) continue;              // garde-fous
+      const num = String(r[intKey] || '').trim();
+      const val = normaliseAmount(r[intValKey]);
+      if (!num || !val) continue;
 
-      /* 2.1 Recherche GED sur le N° de facture seul ----------- */
-      const docs = await this.searchFactura(facturaCtId, [
-        { FieldName:'FC_no_de_la_factura', Operator:'=', Value:numFact, type:'string' }
+      // 2.1 recherche dans GED
+      const docs = await this.searchFactura(ctId, [
+        { FieldName: extKeyNum, Value: num, type: 'string' }
       ]);
-      const doc  = docs[0];
+      const doc = docs[0];
       if (!doc) continue;
 
-      /* 2.2 Contrôle du montant avec tolérance ---------------- */
-      const bruteDoc   = doc.Fields?.find(f => f.Code === 'FC_importe_de_la_factura')?.Value;
-      const importeDoc = normaliseAmount(bruteDoc);
-      console.log(`🔍 N°${numFact} | Ligne=${importe} | GED=${importeDoc}`);
-      if (Math.abs(Number(importeDoc) - Number(importe)) > 0.01) continue;
+      // 2.2 contrôle du montant
+      const cmpRaw = doc.Fields.find(f => f.Code === extKeyAmt)?.Value;
+      const cmp    = normaliseAmount(cmpRaw);
+      if (Math.abs(Number(cmp) - Number(val)) > 0.01) continue;
 
-      /* 2.3 Mise à jour du doc GED (FC_pagado → 'Si') ---------- */
-      await this.marquerPagado(doc, facturaCtId);
+      // 2.3 marquer le doc GED (Pagado → Si)
+      await this.marquerPagado(doc, ctId);
 
-      /* 2.4 Mise à jour de la table interne ------------------- */
-      await this.marquerLigneOk(r, tableName);
-      this.$set(this.rows[r._idx], 'isChecked', 'true');
+      // 2.4 mettre à jour la table interne (isChecked → true)
+      await this.callPluginAction({
+        Action: 3,
+        Data: JSON.stringify({
+          TableName: tbl,
+          Rows: [{
+            Id: Number(r._rowId) || 0,
+            Cells: [
+              { ColumnName: this.isCheckedCol, Value: this.checkedValue },
+              { ColumnName: intKey,    Value: num  },
+              { ColumnName: intValKey, Value: String(val) }
+            ]
+          }]
+        })
+      });
+
+      // 2.5 mettre à jour l’UI sur la bonne ligne
+      this.$set(this.rows[r._idx], this.isCheckedCol, this.checkedValue);
       matched++;
     }
 
-    /* 3. Fin de boucle, feedback UI --------------------------- */
     window.getApp.$emit(
       'APP_MESSAGE',
       `Conciliation terminée : ${matched}/${todo.length} facture(s) rapprochée(s).`
     );
 
   } catch (err) {
-    this.error = err.message || String(err);
-    window.getApp.$emit('APP_ERROR', this.error);
-
+    console.error(err);
+    this.error = err.message;
   } finally {
     this.loadingConciliation = false;
   }
-},
-
-/* === Helpers ====================================================== */
-
-/* Marque FC_pagado = 'Si' et sauvegarde le document GED */
-async marquerPagado (doc, ctId) {
-  const currentFields = doc.Fields.map(f => ({ ...f }));        // shallow copy
-  const pagado        = currentFields.find(f => f.Code === 'FC_pagado');
-
-  if (pagado) pagado.Value = 'Si';
-  else currentFields.push({
-    DefFieldID : 21093,  Type : 3,  Code : 'FC_pagado',  Value : 'Si'
-  });
-
-  await this.callRest('POST',
-    'https://apinetdemo.doc-ecm.cloud/api/document/save',
-    {
-      ObjectID     : doc.ObjectID ?? doc.Id,
-      Operation    : 2,
-      ContentTypeID: Number(ctId),
-      Fields       : currentFields
-    });
-},
-
-/* Coche la ligne correspondante dans la table interne */
-async marquerLigneOk (row, tableName) {
-  await this.callPluginAction({
-    Action: 3,
-    Data  : JSON.stringify({
-      TableName: tableName,
-      Rows: [{
-        Id   : Number(row._rowId) || 0,
-        Cells: [
-          { ColumnName:'isChecked',   Value:'true' },
-          { ColumnName:'Importe',     Value: row.FC_importe_de_la_factura },
-          { ColumnName:'Comprobante', Value: row.FC_no_de_la_factura },
-          { ColumnName:'Fecha', Value: row.FC_fecha_de_la_factu}
-        ]
-      }]
-    })
-  });
-},
-
-
-
-  
-async searchFactura(ctId, filters) {
-
-  const res = await this.callRest(
-    'POST',
-    'https://apinetdemo.doc-ecm.cloud/api/search/advanced',
-    {
-      searchPattern : buildSearchPattern(filters),
-      contentTypeIDs: String(ctId)
-    }
-  );
-  return Array.isArray(res) ? res : (res.Objects || []);
-},
-
-    /* ------------------------------------------------------------------ */
-
-
+}
+,
     async runExtraction() {
       if (!this.pdfFile) return;
       this.loadingExtraction = true;
@@ -535,7 +340,7 @@ async searchFactura(ctId, filters) {
         // Ajouter la colonne isChecked à chaque ligne avec la valeur false par défaut
         this.rows = data.map(row => {
           const newRow = { ...row };
-          newRow.isChecked = 'false';
+          newRow[ this.isCheckedCol ] = this.uncheckedValue;
           return newRow;
         });
 
@@ -568,15 +373,87 @@ async searchFactura(ctId, filters) {
         this.loadingExtraction = false;
       }
     },
-    async callPluginAction(body) {
-      return fetchAuth(
-        'POST',
-        `${this.$store.getters['account/apiUrl']}/api/plugin/execute-action`,
-        body,
-        this.pluginConfig.auth
-      );
-    }
+    async marquerPagado(doc, ctId) {
+  const champ  = this.pluginConfig.conciliationInfos.codeValidation;
+  const valeur = this.pluginConfig.conciliationInfos.valueValidation; 
+  const defId  = this.pluginConfig.conciliationInfos.codeValidationId;
 
+  const currentFields = doc.Fields.map(f => ({ ...f }));
+  const cible = currentFields.find(f => f.Code === champ);
+
+  if (cible) {
+    cible.Value = valeur;
+  } else {
+    currentFields.push({
+      DefFieldID: defId,
+      Type: 3,
+      Code: champ,
+      Value: valeur
+    });
+  }
+
+  console.log('📤 PATCH GED:', {
+    ObjectID: doc.ObjectID ?? doc.Id,
+    ContentTypeID: ctId,
+    Champ: champ,
+    Valeur: valeur
+  });
+
+  await this.callRest(
+    'POST',
+    `${this.pluginConfig.auth.baseUrl}/api/document/save`,
+    {
+      ObjectID     : doc.ObjectID ?? doc.Id,
+      Operation    : 2,
+      ContentTypeID: Number(ctId),
+      Fields       : currentFields
+    }
+  );
+},
+
+
+    async marquerLigneOk(row, tbl) {
+      const cells = [
+        { ColumnName: this.internalCols[0], Value: row[this.internalCols[0]] },
+        { ColumnName: this.internalCols[1], Value: row[this.internalCols[1]] },
+        { ColumnName: this.isCheckedCol, Value: this.checkedValue }
+      ];
+      await this.callPluginAction({
+        Action: 3,
+        Data: JSON.stringify({ TableName: tbl, Rows: [{ Id: Number(row._rowId), Cells: cells }] })
+      });
+    },
+
+    async searchFactura(ctId, filters) {
+      const res = await this.callRest('POST', `${this.pluginConfig.auth.baseUrl}/api/search/advanced`, {
+        searchPattern: buildSearchPattern(filters),
+        contentTypeIDs: String(ctId)
+      });
+      return Array.isArray(res) ? res : (res.Objects || []);
+    },
+
+    async loadRowsFromTable() {
+      const tbl = this.pluginConfig.dbTableName;
+      if (!tbl) return this.rows = [];
+      let resp = await this.callPluginAction({ Action: 2, Data: JSON.stringify({ TableName: tbl }) });
+      if (typeof resp === 'string') resp = JSON.parse(resp);
+      const recs = Array.isArray(resp) ? resp : (resp?.Rows || []);
+      this.rows = recs.map(r => {
+        const o = {};
+        (r.Cells || []).forEach(c => o[c.ColumnName] = c.Value);
+        o[this.isCheckedCol] = o[this.isCheckedCol] || this.uncheckedValue;
+        o._rowId = r.Id;
+        return o;
+      });
+    },
+
+    async callRest(method, endpoint, body) {
+      return fetchAuth(method, endpoint, body, this.pluginConfig.auth);
+    },
+
+    async callPluginAction(body) {
+      return fetchAuth('POST', `${this.$store.getters['account/apiUrl']}/api/plugin/execute-action`, body, this.pluginConfig.auth);
+    }
   }
 };
 </script>
@@ -588,7 +465,6 @@ async searchFactura(ctId, filters) {
 .dropzone:hover {
   background-color: #f0f4f8;
 }
-
 table {
   border: 1px solid #d1d5db;
 }
