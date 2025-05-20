@@ -197,7 +197,6 @@ export default {
 
     async runConciliation() {
   console.clear();
-  // → charger d'abord la table interne
   if (!this.rows.length) await this.loadRowsFromTable();
   if (!this.rows.length) {
     return window.getApp.$emit('APP_MESSAGE', 'Aucun enregistrement à concilier.');
@@ -210,7 +209,6 @@ export default {
   const [extKeyNum, extKeyAmt] = this.externalCols;
 
   try {
-    // 1) TODO-list = non cochées ET complètes
     const todo = this.rows
       .map((r,i) => ({ ...r, _idx: i }))
       .filter(r =>
@@ -220,28 +218,23 @@ export default {
 
     let matched = 0;
 
-    // 2) Parcours des lignes à rapprocher
     for (const r of todo) {
       const num = String(r[intKey] || '').trim();
       const val = normaliseAmount(r[intValKey]);
       if (!num || !val) continue;
 
-      // 2.1 recherche dans GED
       const docs = await this.searchFactura(ctId, [
         { FieldName: extKeyNum, Value: num, type: 'string' }
       ]);
       const doc = docs[0];
       if (!doc) continue;
 
-      // 2.2 contrôle du montant
       const cmpRaw = doc.Fields.find(f => f.Code === extKeyAmt)?.Value;
       const cmp    = normaliseAmount(cmpRaw);
       if (Math.abs(Number(cmp) - Number(val)) > 0.01) continue;
 
-      // 2.3 marquer le doc GED (Pagado → Si)
       await this.marquerPagado(doc, ctId);
 
-      // 2.4 mettre à jour la table interne (isChecked → true)
       await this.callPluginAction({
         Action: 3,
         Data: JSON.stringify({
@@ -257,7 +250,6 @@ export default {
         })
       });
 
-      // 2.5 mettre à jour l’UI sur la bonne ligne
       this.$set(this.rows[r._idx], this.isCheckedCol, this.checkedValue);
       matched++;
     }
@@ -281,15 +273,12 @@ export default {
       this.error = '';
 
       const tableName = this.pluginConfig.dbTableName || 'OcrExtractionResults';
-      // Normalisation du nom de fichier pour comparaison
       const rawName = this.pdfFile.name.trim();
       const filename = rawName.toUpperCase();
 
       try {
-        // 1. Vérifier ou créer la table interne si nécessaire
         let existing = [];
         try {
-          // Tentative de lecture des doublons
           existing = await this.callPluginAction({
             Action: 2,
             Data: JSON.stringify({
@@ -300,7 +289,6 @@ export default {
             })
           });
         } catch (err) {
-          // Si la table n'existe pas, on la crée avec les colonnes par défaut + filename
           const baseCols = [...this.columns];
           if (!baseCols.includes('filename')) baseCols.push('filename');
           await this.callPluginAction({
@@ -309,7 +297,6 @@ export default {
           });
           existing = [];
         }
-        // Si des enregistrements existent, on bloque l'import
         console.log("IS EXIST ", existing, "TAILE ", existing.length)
         const fileExists = Array.isArray(existing) && existing.some(record =>
           Array.isArray(record.Cells) && record.Cells.some(cell =>
@@ -321,7 +308,6 @@ export default {
           throw new Error(`Le fichier « ${filename} » a déjà été importé.`);
         }
 
-        // 2. Appel OCR externe
         const form = new FormData();
         form.append('File', this.pdfFile);
         if (this.columns.length) {
@@ -337,14 +323,12 @@ export default {
           throw new Error('Aucune ligne extraite.');
         }
 
-        // Ajouter la colonne isChecked à chaque ligne avec la valeur false par défaut
         this.rows = data.map(row => {
           const newRow = { ...row };
           newRow[ this.isCheckedCol ] = this.uncheckedValue;
           return newRow;
         });
 
-        // 3. Créer table (idempotent)
         const cols = Object.keys(this.rows[0]);
         if (!cols.includes('filename')) cols.push('filename');
         await this.callPluginAction({
@@ -352,7 +336,6 @@ export default {
           Data: JSON.stringify({ TableName: tableName, ColumnNames: cols })
         });
 
-        // 4. Insérer les lignes extraites
         const payloadRows = this.rows.map(row => ({
           Id: 0,
           Cells: [
