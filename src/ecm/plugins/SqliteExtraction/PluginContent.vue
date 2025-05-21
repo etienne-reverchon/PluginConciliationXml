@@ -9,14 +9,14 @@
       @drop.prevent="onDrop"
     >
       <div v-if="!xmlFile">
-        Glissez-déposez un fichier CAMT.054 XML<br /><small>(text/xml)</small>
+        Glissez-déposez un fichier CAMT.054 XML<br><small>(text/xml)</small>
       </div>
       <div v-else class="font-medium text-gray-700">
         🗎 {{ xmlFile.name }}
       </div>
     </div>
 
-    <!-- choix de colonnes -->
+    <!-- sélection des colonnes -->
     <multi-combo
       v-model="columns"
       :items="pluginConfig.defaultColumns"
@@ -48,6 +48,7 @@
     <table v-if="rows.length" class="table-auto w-full mt-6 border-collapse">
       <thead>
         <tr class="bg-gray-100">
+          <!-- clé = nom de colonne -->
           <th
             v-for="col in visibleCols"
             :key="col"
@@ -58,8 +59,14 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(row, idx) in rows" :key="idx" class="hover:bg-gray-50">
-          <td v-for="col in visibleCols" :key="col" class="border px-2 py-1">
+        <!-- clé = index ligne -->
+        <tr v-for="(row, rIndex) in rows" :key="rIndex" class="hover:bg-gray-50">
+          <!-- clé = combinaison ligne+colonne -->
+          <td
+            v-for="(col, cIndex) in visibleCols"
+            :key="`${rIndex}-${cIndex}`"
+            class="border px-2 py-1"
+          >
             {{ row[col] || '' }}
           </td>
         </tr>
@@ -67,6 +74,9 @@
     </table>
   </div>
 </template>
+
+
+
 
 <script>
 import MultiCombo from './MultiCombo.vue';
