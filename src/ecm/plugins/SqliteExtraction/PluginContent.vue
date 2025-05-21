@@ -213,6 +213,7 @@ export default {
     },
 
     /* ----- extraction ----- */
+
     async runExtraction() {
   if (!this.xmlFile) return;
 
@@ -224,53 +225,56 @@ export default {
 
   try {
     /* ----------------------------------------------------------------
-       Étape 1 : vérifie si le fichier existe déjà
-       (tolère l’erreur 400 “Elemento no encontrado” si la table n’existe pas)
+       Étape 0 : crée (ou ajuste) la table AVANT toute vérification
     ---------------------------------------------------------------- */
-    let existing = [];
-    try {
-      existing = await this.callPluginAction({
-        Action: 2,
-        Data  : JSON.stringify({
-          TableName: tableName,
-          Filters  : [{ ColumnName: 'filename', Operator: 'IN', Value: filename }]
-        })
-      });
-    } catch (err) {
-      // table inconnue => le serveur renvoie 400 ; on ignore et on crée plus bas
-      if (err.message.endsWith('→ 400')) {
-        existing = [];                 // table absente = aucun doublon
-      } else {
-        throw err;                     // autre erreur => remonter
-      }
-    }
+    const baseCols = [...this.pluginConfig.defaultColumns,
+                      'filename',
+                      this.isCheckedCol];
+    await this.callPluginAction({
+      Action: 1,
+      Data  : JSON.stringify({ TableName: tableName, ColumnNames: baseCols })
+    });
 
-    if (Array.isArray(existing) && existing.length) {
+    /* ----------------------------------------------------------------
+       Étape 1 : contrôle strict du doublon filename
+    ---------------------------------------------------------------- */
+    const resp = await this.callPluginAction({
+      Action: 2,
+      Data  : JSON.stringify({
+        TableName: tableName,
+        Filters  : [{ ColumnName: 'filename',
+                      Operator  : 'IN',
+                      Value     : filename }]
+      })
+    });
+
+    /* la réponse peut être : string JSON | {Rows:[…]} | array */
+    let rowsFound = Array.isArray(resp) ? resp
+                  : resp?.Rows            ? resp.Rows
+                  : typeof resp === 'string' ? JSON.parse(resp)
+                  : [];
+    const isDuplicate = rowsFound.some(r =>
+      (r.Cells || []).some(c =>
+        c.ColumnName === 'filename' &&
+        c.Value.trim().toUpperCase() === filename
+      )
+    );
+    if (isDuplicate) {
       throw new Error(`Le fichier « ${filename} » a déjà été importé.`);
     }
 
     /* ----------------------------------------------------------------
-       Étape 2 : lecture + parsing du XML
+       Étape 2 : parse XML → rows
     ---------------------------------------------------------------- */
     const xmlText = await this.xmlFile.text();
     const data    = extractCamtRows(xmlText, this.pluginConfig, filename);
     if (!data.length) throw new Error('Aucune transaction valide dans le XML.');
-
     this.rows = data;
 
     /* ----------------------------------------------------------------
-       Étape 3 : (re)création ou mise à jour de la table interne
-                 avec TOUTES les colonnes réellement présentes
+       Étape 3 : insère les lignes
     ---------------------------------------------------------------- */
-    const cols = Object.keys(this.rows[0]);              // ex. ['Fecha','Comprobante','Importe','filename','isChecked']
-    await this.callPluginAction({
-      Action: 1,
-      Data  : JSON.stringify({ TableName: tableName, ColumnNames: cols })
-    });
-
-    /* ----------------------------------------------------------------
-       Étape 4 : insertion des lignes
-    ---------------------------------------------------------------- */
+    const cols = Object.keys(this.rows[0]); // colonnes réelles + filename + isChecked
     const payloadRows = this.rows.map(r => ({
       Id   : 0,
       Cells: cols.map(c => ({ ColumnName: c, Value: String(r[c] ?? '') }))
@@ -280,9 +284,10 @@ export default {
       Data  : JSON.stringify({ TableName: tableName, Rows: payloadRows })
     });
 
-    window.getApp.$emit('APP_MESSAGE',
-      `Extraction XML réussie ! (${this.rows.length} lignes ajoutées)`);
-
+    window.getApp.$emit(
+      'APP_MESSAGE',
+      `Extraction XML réussie ! (${this.rows.length} lignes ajoutées)`
+    );
   } catch (err) {
     this.error = err.message;
     window.getApp.$emit('APP_ERROR', this.error);
@@ -291,7 +296,7 @@ export default {
   }
 },
 
-
+    
     /* ----- conciliation (identique à ta version originale) ----- */
     async runConciliation() {
       console.clear();
