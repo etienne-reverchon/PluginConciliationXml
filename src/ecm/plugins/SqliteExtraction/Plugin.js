@@ -19,7 +19,7 @@ export default {
     password : "admin.empresa"
     },
     conciliationInfos: {
-      columsInternalTable : "Comprobante, Importe",
+      columsInternalTable : "InvoiceId, InvoiceAmount",
       columsDocument      : "FC_no_de_la_factura, FC_importe_de_la_factura",
       isCheckedColumn     : "isChecked",
       uncheckedValue      : "false",
