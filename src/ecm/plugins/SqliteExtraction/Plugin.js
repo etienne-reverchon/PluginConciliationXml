@@ -1,10 +1,10 @@
 export default {
-  name: 'conciliation',
+  name: 'ConciliationFromXml',
   icon: 'file-import',
   pluginConfig: {
-    name: 'Conciliation',
+    name: 'ConciliationFromXml',
     contentType: 'SqliteFile v1.0',
-    acceptMime: ['application/pdf'],
+    acceptMime: ['application/pdf', 'text/xml'],
     dbTableName : 'ConciliationTable',
     defaultColumns: ['Fecha', 'Comprobante', 'Importe'],
     facturaContentTypeId : 8729,
@@ -28,8 +28,12 @@ export default {
       codeValidationId    : 21093,
       valueToValidate     : "No",
       valueValidation     : "Si"
+    },
+    xmlFieldMappings: {
+      InvoiceDate      : 'n:RltdDts/n:IntrBkSttlmDt',
+      InvoiceId        : 'n:RmtInf/n:Strd/n:AddtlRmtInf',
+      InvoiceAmount    : 'n:Amt'
     }
-
 
   }
 }
